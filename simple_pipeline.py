@@ -7,7 +7,7 @@ import csv
 positions = {}
 areas = {}
 file_directory = "E:\\computational science\\scientific visualization\\SciVisContest23\\SciVisContest23\\viz-stimulus\\positions\\rank_0_positions.txt"
-max_neurons = 25000 # for now only read those data
+max_neurons = 5000 # for now only read those data
 print("Reading neuron positions...")
 
 # read the data from the file, data format: neuron_id, x, y, z, area
@@ -89,7 +89,86 @@ for i in range(sub_set_size):
     else:
         mean_input[i] = np.mean(input_level) # calculate the mean input level (static)
 print("Mean calcium activity/current/input computed for all neurons.")
-    
+
+# try generate a static connection between neurons
+"""
+network_file = "E:\\computational science\\scientific visualization\\SciVisContest23\\SciVisContest23\\viz-no-network\\network\\rank_0_step_40000_in_network.txt"
+lines = vtk.vtkCellArray()
+weights_arr = vtk.vtkFloatArray()
+weights_arr.SetName("synapse_weight")
+with open(network_file, "r") as f:
+    for line in f:
+        line = line.strip()
+        if not line or line.startswith("#"): # skip empty lines and comments
+            continue
+        parts = line.split()
+        pre_id = int(parts[1]) - 1  # pre-synaptic neuron id
+        post_id = int(parts[3]) - 1  # post-synaptic neuron id
+        weight = float(parts[4])  # synaptic weight
+
+        if pre_id in positions and post_id in positions: # only add the connection if both neurons are in the position list
+            line_cell = vtk.vtkLine()
+            line_cell.GetPointIds().SetId(0, pre_id)
+            line_cell.GetPointIds().SetId(1, post_id)
+            lines.InsertNextCell(line_cell)
+            weights_arr.InsertNextValue(weight)"""
+
+
+def create_polydata(step):
+    """
+    This function will open a specific step file and create network connection between neurons
+    at that specific step.
+    Input: step: int, the step number to read the network file
+    Output: vtkPolyData object representing the neuron network at that step
+    """
+    network_dir = "E:\\computational science\\scientific visualization\\SciVisContest23\\SciVisContest23\\viz-no-network\\network"
+    net_file = os.path.join(network_dir, f"rank_0_step_{step}_in_network.txt")
+    if not os.path.exists(net_file):
+        print(f"[WARN] network file missing for step {step}: {net_file}")
+        return None
+    lines = vtk.vtkCellArray() # create a new array for lines
+    weights_arr = vtk.vtkFloatArray() # create a new array for weights
+    weights_arr.SetName("synapse_weight")
+    with open(net_file, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"): # skip empty lines and comments
+                continue
+            parts = line.split()
+            pre_id = int(parts[1]) - 1  # pre-synaptic neuron id
+            post_id = int(parts[3]) - 1  # post-synaptic neuron id
+            weight = float(parts[4])  # synaptic weight
+
+            if pre_id in positions and post_id in positions: # only add the connection if both neurons are in the position list
+                line_cell = vtk.vtkLine()
+                line_cell.GetPointIds().SetId(0, pre_id)
+                line_cell.GetPointIds().SetId(1, post_id)
+                lines.InsertNextCell(line_cell)
+                weights_arr.InsertNextValue(weight)
+
+    print(f"[step {step}] kept {lines.GetNumberOfCells()} edges")
+
+    # create vtk polydata object
+    polydata = vtk.vtkPolyData()
+    polydata.SetPoints(points)
+    polydata.SetVerts(vertices) # set neurons as vertices
+    polydata.SetLines(lines) # set the synaptic connections
+
+     # point data (same for all steps here)
+    polydata.GetPointData().AddArray(mean_ca_array)
+    polydata.GetPointData().AddArray(area_arr)
+    polydata.GetPointData().AddArray(mean_current_array)
+    polydata.GetPointData().AddArray(mean_input_array)
+    polydata.GetPointData().SetActiveScalars("Mean_Calcium_Activity")
+
+    # cell data (for synapse lines) This part is not working for generative pvd for some unknown reason.
+    """polydata.GetCellData().AddArray(weights_arr)
+    polydata.GetCellData().SetActiveScalars("synapse_weight")"""
+    return polydata
+
+
+TIME_STEPS = [40000, 50000, 60000]  # just for test now
+
 # write to a vtk file for Paraview visualization
 points = vtk.vtkPoints()
 mean_ca_array = vtk.vtkFloatArray()
@@ -115,10 +194,38 @@ for i in range(num_points):
     vertices.InsertNextCell(1)
     vertices.InsertCellPoint(i)
 
+# now create polydata for each time step and write to separate files
+for step in TIME_STEPS:
+    poly = create_polydata(step)
+    if poly is None:
+        continue
+
+    output_filename = f"neuron_network_step_{step}.vtp"
+    writer = vtk.vtkXMLPolyDataWriter()  # need a VTP writer for animation
+    writer.SetFileName(output_filename)
+    writer.SetInputData(poly)
+    writer.Write()
+    print(f"VTP file '{output_filename}' written successfully.")
+
+# save multiple vtp files to a pvd file
+pvd_path ="neurons_time_series.pvd"
+with open(pvd_path, "w") as pvd_file:
+    pvd_file.write('<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n')
+    pvd_file.write('  <Collection>\n')
+    for step in TIME_STEPS:
+        output_filename = f"neuron_network_step_{step}.vtp"
+        print(f"VTP file '{output_filename}' written successfully.")
+        pvd_file.write(f'    <DataSet timestep="{step}" group="" part="0" file="{output_filename}"/>\n')
+    pvd_file.write('  </Collection>\n')
+    pvd_file.write('</VTKFile>\n')
+print(f"PVD file '{pvd_path}' written successfully.")
+
+
 # create a vtk polydata object
-polydata = vtk.vtkPolyData()
-polydata.SetPoints(points)
-polydata.SetVerts(vertices)
+"""polydata = vtk.vtkPolyData()
+polydata.SetPoints(points) # set the points
+polydata.SetVerts(vertices) # set neurons as vertices
+polydata.SetLines(lines) # set the synaptic connections
 
 # add data arrays to the polydata
 polydata.GetPointData().AddArray(mean_ca_array) # add mean calcium activity as point data
@@ -126,11 +233,13 @@ polydata.GetPointData().AddArray(area_arr) # add area as point data
 polydata.GetPointData().SetActiveScalars("Mean_Calcium_Activity") # set the active scalars to mean calcium activity
 polydata.GetPointData().AddArray(mean_current_array) # add mean current level as point data
 polydata.GetPointData().AddArray(mean_input_array) # add mean input level as point data
+polydata.GetCellData().AddArray(weights_arr) # add synaptic weights as cell data
+polydata.GetCellData().SetActiveScalars("synapse_weight") # set the active scalars to synaptic weights
 
 # write the polydata to a vtk file
 writer = vtk.vtkPolyDataWriter()
 writer.SetFileName("neuron_positions.vtk")
 writer.SetInputData(polydata)
 writer.Write()
-print("VTK file 'neuron_positions.vtk' written successfully.")
+print("VTK file 'neuron_positions.vtk' written successfully.")"""
 
