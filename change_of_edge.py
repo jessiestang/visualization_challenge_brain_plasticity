@@ -20,7 +20,7 @@ def load_positions(positions_file: str, max_neurons: int | None = None):
             parts = line.split()
             nid = int(parts[0]) - 1   # zero-based
             x, y, z = map(float, parts[1:4]) # read coordinates
-            area = parts[4] # read area
+            area = parts[6] # read area
             positions[nid] = (x, y, z)
             areas[nid] = area
 
@@ -77,7 +77,7 @@ def compute_mean_from_monitors(monitor_dir: str, subset_ids):
     return mean_calcium, mean_current, mean_input
 
 
-def build_points_and_pointdata(positions, areas, subset_ids, mean_calcium, mean_current, mean_input):
+def build_points_and_pointdata(positions, areas, subset_ids):
     """
     This function creates vtkPoints and point-data arrays. 
     Return: points, nid_to_pid, mean_ca_array, area_arr, mean_current_array, mean_input_array
@@ -85,29 +85,29 @@ def build_points_and_pointdata(positions, areas, subset_ids, mean_calcium, mean_
     points = vtk.vtkPoints()
     nid_to_pid = {}
 
-    mean_ca_array = vtk.vtkFloatArray()
-    mean_ca_array.SetName("Mean_Calcium_Activity")
+    # mean_ca_array = vtk.vtkFloatArray()
+    # mean_ca_array.SetName("Mean_Calcium_Activity")
 
     area_arr = vtk.vtkStringArray()
     area_arr.SetName("area")
 
-    mean_current_array = vtk.vtkFloatArray()
-    mean_current_array.SetName("Mean_Current_Level")
+    # mean_current_array = vtk.vtkFloatArray()
+    # mean_current_array.SetName("Mean_Current_Level")
 
-    mean_input_array = vtk.vtkFloatArray()
-    mean_input_array.SetName("Mean_Input_Level")
+    # mean_input_array = vtk.vtkFloatArray()
+    # mean_input_array.SetName("Mean_Input_Level")
 
     for nid in subset_ids:
         x, y, z = positions[nid]
         pid = points.InsertNextPoint(x, y, z) # translate nid to pid
         nid_to_pid[nid] = pid
 
-        mean_ca_array.InsertNextValue(mean_calcium.get(nid, 0.0))
+        # mean_ca_array.InsertNextValue(mean_calcium.get(nid, 0.0))
         area_arr.InsertNextValue(areas.get(nid, "unknown"))
-        mean_current_array.InsertNextValue(mean_current.get(nid, 0.0))
-        mean_input_array.InsertNextValue(mean_input.get(nid, 0.0))
+        # mean_current_array.InsertNextValue(mean_current.get(nid, 0.0))
+        # mean_input_array.InsertNextValue(mean_input.get(nid, 0.0))
 
-    return (points,nid_to_pid,mean_ca_array,area_arr,mean_current_array, mean_input_array)
+    return (points,nid_to_pid,area_arr)
 
 
 def load_edges_for_step(step: int, network_dir: str, subset_ids_set):
@@ -138,10 +138,7 @@ def build_polydata_for_step(
     step: int,
     points: vtk.vtkPoints,
     nid_to_pid: dict[int, int],
-    mean_ca_array: vtk.vtkFloatArray,
     area_arr: vtk.vtkStringArray,
-    mean_current_array: vtk.vtkFloatArray,
-    mean_input_array: vtk.vtkFloatArray,
     edges_this: list[tuple[int, int, float]],
     edge_keys_prev: set[tuple[int, int]],
     edge_keys_next: set[tuple[int, int]],
@@ -190,11 +187,11 @@ def build_polydata_for_step(
     poly.SetLines(lines)
 
     # point data
-    poly.GetPointData().AddArray(mean_ca_array)
+    #poly.GetPointData().AddArray(mean_ca_array)
     poly.GetPointData().AddArray(area_arr)
-    poly.GetPointData().AddArray(mean_current_array)
-    poly.GetPointData().AddArray(mean_input_array)
-    poly.GetPointData().SetActiveScalars("Mean_Calcium_Activity")
+    #poly.GetPointData().AddArray(mean_current_array)
+    #poly.GetPointData().AddArray(mean_input_array)
+    #poly.GetPointData().SetActiveScalars("Mean_Calcium_Activity")
 
     # cell data (edges)
     poly.GetCellData().AddArray(weights_arr)
@@ -208,9 +205,9 @@ def write_vtp_for_steps(
     time_steps,
     polydata_by_step: dict[int, vtk.vtkPolyData],
     output_dir: str,
-    base_name: str = "neuron_network_step_",
+    base_name: str = "initial_neuron_network_step_",
     write_pvd: bool = True,
-    pvd_name: str = "neurons_time_series.pvd",
+    pvd_name: str = "initial_neurons_time_series.pvd",
 ):
     os.makedirs(output_dir, exist_ok=True)
 
@@ -255,19 +252,16 @@ def complete_pipeline(
     print(f"Loaded {len(positions)} neurons, using {len(subset_ids)}")
 
     # 2) monitor-based metrics (or replace with your own)
-    mean_ca, mean_curr, mean_inp = compute_mean_from_monitors(monitor_dir, subset_ids)
-    print("Computed mean calcium, current, input for subset neurons")
+    #mean_ca, mean_curr, mean_inp = compute_mean_from_monitors(monitor_dir, subset_ids)
+    #print("Computed mean calcium, current, input for subset neurons")
 
     # 3) shared VTK points + point data
     (
         points,
         nid_to_pid,
-        mean_ca_array,
         area_arr,
-        mean_current_array,
-        mean_input_array,
     ) = build_points_and_pointdata(
-        positions, areas, subset_ids, mean_ca, mean_curr, mean_inp
+        positions, areas, subset_ids
     )
 
     # 4) load edges for all steps
@@ -294,10 +288,7 @@ def complete_pipeline(
             step,
             points,
             nid_to_pid,
-            mean_ca_array,
             area_arr,
-            mean_current_array,
-            mean_input_array,
             edges_by_step[step],
             prev_keys,
             next_keys,
@@ -313,18 +304,18 @@ def complete_pipeline(
 
 
 if __name__ == "__main__":
-    POS_FILE = "E:\\computational science\\scientific visualization\\SciVisContest23\\SciVisContest23\\viz-stimulus\\positions\\rank_0_positions.txt"
-    NET_DIR = "E:\\computational science\\scientific visualization\\SciVisContest23\\SciVisContest23\\viz-no-network\\network"
+    POS_FILE = "E:\\computational science\\scientific visualization\\SciVisContest23\\SciVisContest23\\viz-calcium\\positions\\rank_0_positions_filtered.txt"
+    NET_DIR = "E:\\computational science\\scientific visualization\\SciVisContest23\\SciVisContest23\\viz-calcium\\network"
     MON_DIR = "E:\\computational science\\scientific visualization\\SciVisContest23\\SciVisContest23\\viz-stimulus\\monitors"
-    OUT_DIR = "output_edge_state_vtp"
+    OUT_DIR = "initial_edge_state_vtp"
 
-    TIME_STEPS = [40000, 50000, 60000, 70000, 80000]  # test steps
-
+    TIME_STEPS = np.linspace(0, 50000, 6, dtype=int)  # test steps
+    print("Time steps to process:", TIME_STEPS)
     complete_pipeline(
         positions_file=POS_FILE,
         network_dir=NET_DIR,
         monitor_dir=MON_DIR,
         output_dir=OUT_DIR,
         time_steps=TIME_STEPS,
-        max_neurons=5000,  # or None for all
+        max_neurons=None,  # or None for all
     )

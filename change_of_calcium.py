@@ -35,23 +35,31 @@ def load_positions(positions_file: str, max_neurons: int | None = None):
 # 2) read the calcium data from monitors
 def load_calcium_data(monitor_file: str, subset_ids: list[int], max_step: int = None):
     """This function loads the time-series calcium data for each coresponded neuron from the monitor file.
-    Input: monitor file path, subset of neuron ids to read
-    Return: time-series calcium data for each neuron"""
+    Input: monitor file path, subset of neuron ids to read, max_step: maximum number of rows to read
+    Return: time-series calcium data for each neuron (dict of nid -> 1D numpy array)"""
     calcium_data_dict = {}
-    step = None
+    
     for nid in subset_ids:
         path = os.path.join(monitor_file, f"0_{nid}.csv")
         if not os.path.exists(path):
-            print(f"Warning: monitor file not found: {path}")
             continue
-        monitor_data = pd.read_csv(path)
-        calcium_data = monitor_data.iloc[5].to_numpy()  # assuming calcium data is in the 6th column (index 5)
-        step = monitor_data.iloc[0].to_numpy()  # time steps in the first column
+        
+        # Read only the first max_step rows from the CSV
+        read_kwargs = {'sep': ';', 'header': None}
         if max_step is not None:
-            calcium_data = calcium_data[:max_step]
-        calcium_data_dict[nid] = calcium_data
-
-    return calcium_data_dict, step
+            read_kwargs['nrows'] = max_step
+        
+        monitor_data = pd.read_csv(path, **read_kwargs)
+        
+        # Extract calcium data from column 5 (6th column)
+        try:
+            calcium_series = monitor_data.iloc[:, 5].to_numpy()
+            calcium_series = np.asarray(calcium_series).ravel().astype(float)
+            calcium_data_dict[nid] = calcium_series
+        except Exception:
+            continue
+    
+    return calcium_data_dict
 
 # 3) create vtkPolyData for neurons with calcium data at a specific time step
 def create_calcium_polydata(positions: dict[int, tuple[float, float, float ]],
@@ -70,7 +78,19 @@ def create_calcium_polydata(positions: dict[int, tuple[float, float, float ]],
             continue
         x, y, z = positions[nid]
         points.InsertNextPoint(x, y, z)
-        calcium_level = calcium_data[nid][time_step]
+
+        arr = calcium_data[nid]
+        # Bounds check: if the requested index is out of range, insert 0.0
+        if time_step < 0 or time_step >= arr.shape[0]:
+            calcium_array.InsertNextValue(0.0)
+            continue
+
+        # Ensure we insert a Python float scalar into the VTK array
+        try:
+            calcium_level = float(arr[time_step])
+        except Exception:
+            # Fallback if the element is not convertible
+            calcium_level = 0.0
         calcium_array.InsertNextValue(calcium_level)
 
     polydata = vtk.vtkPolyData()
@@ -84,9 +104,9 @@ def create_calcium_polydata(positions: dict[int, tuple[float, float, float ]],
 def write_calcium_time_series(polydata_by_step: dict[int, vtk.vtkPolyData],
                                 time_steps: list[int],
                                 output_dir: str,
-                                base_name: str = "neuron_calcium_step_",
+                                base_name: str = "initial_neuron_calcium_step_",
                                 write_pvd: bool = True,
-                                pvd_name: str = "neurons_calcium_time_series.pvd"):
+                                pvd_name: str = "neurons_calcium_initial.pvd"):
         """This function writes the calcium polydata to VTP files for multiple time steps.
         Input: dict of time step -> vtkPolyData, list of time steps, output directory, base name for files, whether to write PVD file, PVD file name."""
         os.makedirs(output_dir, exist_ok=True)
@@ -126,27 +146,39 @@ def main_pipeline(positions_file: str,
     print(f"Loaded {len(subset_ids)} neurons for calcium data processing.")
 
     # Load calcium data
-    calcium_data, step_array = load_calcium_data(monitor_dir, subset_ids, max_step)
+    calcium_data = load_calcium_data(monitor_dir, subset_ids, max_step)
     print(f"Loaded calcium data for {len(calcium_data)} neurons.")
 
-    # Create polydata for each time step
+    if len(calcium_data) == 0:
+        print("No calcium data found; nothing to write.")
+        return
+
+    # Determine the number of available time steps
+    num_available_steps = max(arr.shape[0] for arr in calcium_data.values())
+    
+    # Create polydata for every 50th step (0, 50, 100, 150, ...)
+    step_interval = 50
+    time_steps_to_process = list(range(0, num_available_steps, step_interval))
+    
     polydata_by_step = {}
-    for step in step_array:
-        polydata = create_calcium_polydata(positions, calcium_data, subset_ids, step)
-        polydata_by_step[step] = polydata
-    print(f"Created calcium polydata for {len(polydata_by_step)} time steps.")
+    for step_idx in time_steps_to_process:
+        polydata = create_calcium_polydata(positions, calcium_data, subset_ids, step_idx)
+        polydata_by_step[step_idx] = polydata
+    
+    print(f"Created calcium polydata for {len(polydata_by_step)} time steps (every {step_interval}th step, total available: {num_available_steps}).")
 
     # Write to VTP files
-    write_calcium_time_series(polydata_by_step, step_array, output_dir)
+    write_calcium_time_series(polydata_by_step, time_steps_to_process, output_dir)
     print(f"Wrote calcium VTP files to {output_dir}.")
 
 
 if __name__ == "__main__":
     POS_FILE = "E:\\computational science\\scientific visualization\\SciVisContest23\\SciVisContest23\\viz-calcium\\positions\\rank_0_positions_filtered.txt"
     MON_DIR = "E:\\computational science\\scientific visualization\\SciVisContest23\\SciVisContest23\\viz-stimulus\\monitors"
-    OUT_DIR = "output_calcium_vtp"
+    OUT_DIR = "output_calcium_initial_vtp"
     main_pipeline(
         positions_file=POS_FILE,
         monitor_dir=MON_DIR,
         output_dir=OUT_DIR,
+        max_step = 501
     )
