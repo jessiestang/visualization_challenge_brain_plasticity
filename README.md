@@ -1,10 +1,10 @@
-#  Scientific visualizations of the neuron network activity and plasticity 
+#  Scientific visualizations of the neuronal network activity (calcium levels) and plasticity (synaptic rewiring)
 
 Repository and project owned by: Xuening Tang, Luka Waronig (association with: University of Amsterdam)
 
 This repository contains visualization tools and analysis scripts developed for exploring neuronal network simulations of plasticity changes in the human brain, inspired by the IEEE SciVis Contest 2023.
 
-Brain plasticity, the brain's ability to reorganize and form new synaptic connections, is fundamental to learning, memory formation, and recovery from injury. This project provides interactive visualizations and analysis pipelines to understand the dynamics of neuronal networks, focusing on calcium signaling, synaptic connections, and temporal patterns of neural activity.
+Brain plasticity, the brain's ability to reorganize and form new synaptic connections, is fundamental to learning, memory formation, and recovery from injury. This project provides scientific visualizations and analysis pipelines to understand the dynamics of neuronal networks, focusing on calcium signaling, synaptic connections, and temporal patterns of neural activity.
 
 ## Dataset
 
@@ -85,6 +85,8 @@ Brain plasticity involves continuous reorganization of neuronal connections. Key
 - **Calcium signaling**: Calcium ions serve as crucial messengers triggering plasticity mechanisms
 - **Hebbian learning**: "Neurons that fire together, wire together"
 - **Homeostatic regulation**: Networks maintain stable activity levels while allowing structural changes
+
+Using the large scale discrete simulation data (Gerrits et al 2022), we demonstrate a pipeline which can explore these aspects together through scientific visualizations.
 
 ## References:
 
