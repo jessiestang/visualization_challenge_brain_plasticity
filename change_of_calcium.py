@@ -3,6 +3,7 @@ import os
 import numpy as np
 import pandas as pd
 import vtk
+from typing import Dict, List, Optional,Sequence
 
 # 1) read the positions of neurons
 def load_positions(positions_file: str, max_neurons: int | None = None):
@@ -60,6 +61,43 @@ def load_calcium_data(monitor_file: str, subset_ids: list[int], max_step: int = 
             continue
     
     return calcium_data_dict
+def read_calcium_at_indices(
+    csv_path: str,
+    wanted_indices: Sequence[int],
+    sep: str = ";",
+    calcium_col: int = 5,   # 0-based; change to 4 if your file differs
+    comment_prefix: str = "#",
+) -> List[Optional[float]]:
+    """
+    Returns calcium values at given row indices (0-based data rows, excluding comments).
+    If an index is out of range, returns None for that position.
+    This makes sure that the the timeline of the calcium data is aligned with the edge data
+    """
+    wanted_set = set(wanted_indices)
+    max_wanted = max(wanted_indices) if wanted_indices else -1
+
+    out_map: Dict[int, float] = {}
+    data_row = -1  # counts only non-empty, non-comment rows
+
+    with open(csv_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith(comment_prefix):
+                continue
+            data_row += 1
+
+            if data_row > max_wanted:
+                break
+
+            if data_row in wanted_set:
+                parts = [p.strip() for p in line.split(sep)]
+                try:
+                    out_map[data_row] = float(parts[calcium_col])
+                except (IndexError, ValueError):
+                    out_map[data_row] = float("nan")
+
+    # preserve order of wanted_indices
+    return [out_map.get(i, None) for i in wanted_indices]
 
 # 3) create vtkPolyData for neurons with calcium data at a specific time step
 def create_calcium_polydata(positions: dict[int, tuple[float, float, float ]],
@@ -102,83 +140,98 @@ def create_calcium_polydata(positions: dict[int, tuple[float, float, float ]],
 
 # 4) write the calcium polydata to VTP files for multiple time steps
 def write_calcium_time_series(polydata_by_step: dict[int, vtk.vtkPolyData],
-                                time_steps: list[int],
+                                time_values: list[int],
                                 output_dir: str,
-                                base_name: str = "initial_neuron_calcium_step_",
+                                base_name: str = "100000_neuron_calcium_step_",
                                 write_pvd: bool = True,
-                                pvd_name: str = "neurons_calcium_initial.pvd"):
-        """This function writes the calcium polydata to VTP files for multiple time steps.
-        Input: dict of time step -> vtkPolyData, list of time steps, output directory, base name for files, whether to write PVD file, PVD file name."""
-        os.makedirs(output_dir, exist_ok=True)
-    
-        for step in time_steps:
-            if step not in polydata_by_step:
-                continue
-            polydata = polydata_by_step[step]
-            writer = vtk.vtkXMLPolyDataWriter()
-            writer.SetFileName(os.path.join(output_dir, f"{base_name}{step:06d}.vtp"))
-            writer.SetInputData(polydata)
-            writer.Write()
-    
-        if write_pvd:
-            pvd_path = os.path.join(output_dir, pvd_name)
-            with open(pvd_path, 'w') as pvd_file:
-                pvd_file.write('<?xml version="1.0"?>\n')
-                pvd_file.write('<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n')
-                pvd_file.write('  <Collection>\n')
-                for step in time_steps:
-                    if step not in polydata_by_step:
-                        continue
-                    vtp_file = f"{base_name}{step:06d}.vtp"
-                    pvd_file.write(f'    <DataSet timestep="{step}" group="" part="0" file="{vtp_file}"/>\n')
-                pvd_file.write('  </Collection>\n')
-                pvd_file.write('</VTKFile>\n')
+                                pvd_name: str = "neurons_calcium_100000.pvd"):
+    """This function writes the calcium polydata to VTP files for multiple selected time values.
+    `polydata_by_step` keys are indices (0..N-1); `time_values` contains the actual timeline values.
+    Filenames will include the actual time value. The PVD will reference those time values."""
+    os.makedirs(output_dir, exist_ok=True)
+
+    for idx, time_val in enumerate(time_values):
+        if idx not in polydata_by_step:
+            continue
+        polydata = polydata_by_step[idx]
+        writer = vtk.vtkXMLPolyDataWriter()
+        writer.SetFileName(os.path.join(output_dir, f"{base_name}{time_val:06d}.vtp"))
+        writer.SetInputData(polydata)
+        writer.Write()
+
+    if write_pvd:
+        pvd_path = os.path.join(output_dir, pvd_name)
+        with open(pvd_path, 'w') as pvd_file:
+            pvd_file.write('<?xml version="1.0"?>\n')
+            pvd_file.write('<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n')
+            pvd_file.write('  <Collection>\n')
+            for idx, time_val in enumerate(time_values):
+                if idx not in polydata_by_step:
+                    continue
+                vtp_file = f"{base_name}{time_val:06d}.vtp"
+                pvd_file.write(f'    <DataSet timestep="{time_val}" group="" part="0" file="{vtp_file}"/>\n')
+            pvd_file.write('  </Collection>\n')
+            pvd_file.write('</VTKFile>\n')
 
 def main_pipeline(positions_file: str,
                       monitor_dir: str,
                       output_dir: str,
+                      time_values: Sequence[int],
+                      calcium_stride: int = 1,
                       max_neurons: int | None = None,
-                      max_step: int | None = None):
+                      ):
     """Main pipeline to process calcium data and write to VTP files.
-    Input: positions file path, monitor directory, output directory, list of time steps, maximum number of neurons, maximum time steps."""
+    Reads only the requested row indices from each neuron's CSV so timeline aligns with edge TIME_LINE.
+    `time_values` is the list/array of actual timeline values (e.g., TIME_LINE); `calcium_stride` is the sampling interval used when CSVs were written."""
     # Load positions and areas
     positions, areas, subset_ids = load_positions(positions_file, max_neurons)
     print(f"Loaded {len(subset_ids)} neurons for calcium data processing.")
 
-    # Load calcium data
-    calcium_data = load_calcium_data(monitor_dir, subset_ids, max_step)
-    print(f"Loaded calcium data for {len(calcium_data)} neurons.")
+    # Determine which row indices in the CSV correspond to the requested timeline
+    wanted_indices = [int(s // calcium_stride) for s in time_values]
+
+    # Load calcium only at the wanted indices for every neuron
+    calcium_data = {}
+    for nid in subset_ids:
+        csv_path = os.path.join(monitor_dir, f"0_{nid}.csv")
+        if not os.path.exists(csv_path):
+            continue
+        vals = read_calcium_at_indices(csv_path, wanted_indices, sep=';', calcium_col=5)
+        if not vals:
+            continue
+        arr = np.array([np.nan if v is None else v for v in vals], dtype=float)
+        calcium_data[nid] = arr
+
+    print(f"Loaded calcium data (selected indices) for {len(calcium_data)} neurons.")
 
     if len(calcium_data) == 0:
-        print("No calcium data found; nothing to write.")
+        print("No calcium data found at requested indices; nothing to write.")
         return
 
-    # Determine the number of available time steps
-    num_available_steps = max(arr.shape[0] for arr in calcium_data.values())
-    
-    # Create polydata for every 50th step (0, 50, 100, 150, ...)
-    step_interval = 50
-    time_steps_to_process = list(range(0, num_available_steps, step_interval))
-    
+    # Build polydata for each requested time index (indices 0..N-1 correspond to time_values)
     polydata_by_step = {}
-    for step_idx in time_steps_to_process:
-        polydata = create_calcium_polydata(positions, calcium_data, subset_ids, step_idx)
-        polydata_by_step[step_idx] = polydata
-    
-    print(f"Created calcium polydata for {len(polydata_by_step)} time steps (every {step_interval}th step, total available: {num_available_steps}).")
+    for idx in range(len(wanted_indices)):
+        polydata = create_calcium_polydata(positions, calcium_data, subset_ids, idx)
+        polydata_by_step[idx] = polydata
 
-    # Write to VTP files
-    write_calcium_time_series(polydata_by_step, time_steps_to_process, output_dir)
-    print(f"Wrote calcium VTP files to {output_dir}.")
+    print(f"Created calcium polydata for {len(polydata_by_step)} selected time steps.")
+
+    # Write to VTP files (filename includes the actual time value) and write PVD with those time values
+    write_calcium_time_series(polydata_by_step, list(time_values), output_dir)
+    print(f"Wrote calcium VTP files and PVD to {output_dir}.")
 
 
 if __name__ == "__main__":
     POS_FILE = "E:\\computational science\\scientific visualization\\SciVisContest23\\SciVisContest23\\viz-calcium\\positions\\rank_0_positions_filtered.txt"
     MON_DIR = "E:\\computational science\\scientific visualization\\SciVisContest23\\SciVisContest23\\viz-stimulus\\monitors"
     OUT_DIR = "output_calcium_initial_vtp"
+    TIME_LINE = np.linspace(0, 100000, 11, dtype=int)
+    calcium_stride = 100
+
     main_pipeline(
         positions_file=POS_FILE,
         monitor_dir=MON_DIR,
         output_dir=OUT_DIR,
-        max_step = 501
+        time_values=TIME_LINE,
+        calcium_stride=calcium_stride,
     )
